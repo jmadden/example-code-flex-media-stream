@@ -33,6 +33,10 @@ const callSid = (participants) => {
   return customerObj[0].callSid;
 };
 
+Actions.addListener('beforeAcceptTask', (payload) => {
+  payload.conferenceOptions.beep = false;
+});
+
 Actions.addListener('beforeTransferTask', async (payload) => {
   const { participants } = payload.task.conference;
 

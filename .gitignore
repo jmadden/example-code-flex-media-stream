@@ -216,3 +216,5 @@ ehthumbs_vista.db
 *.lnk
 
 # End of https://www.gitignore.io/api/node,macos,windows
+
+.twilio-functions

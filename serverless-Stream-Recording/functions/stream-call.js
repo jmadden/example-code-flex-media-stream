@@ -77,7 +77,7 @@ exports.handler = async (context, event, callback) => {
       const { callSid, confSid, taskSid, workerSid } = event;
       const stopStream = stop.stream({ name: `Stream_${workerSid}` });
       const dial = twiml.dial();
-      dial.conference({ endConferenceOnExit: true }, taskSid);
+      dial.conference({ endConferenceOnExit: true, beep: false }, taskSid);
       console.log('Stream TwiML is', twiml.toString());
 
       twilioClient
