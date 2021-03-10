@@ -26,23 +26,24 @@ const handleBeforeTransfer = (options) => {
   });
 };
 
+const callSid = (participants) => {
+  const customerObj = participants.filter(
+    (participant) => participant.participantType === 'customer'
+  );
+  return customerObj[0].callSid;
+};
+
 Actions.addListener('beforeTransferTask', async (payload) => {
   const { participants } = payload.task.conference;
 
-  const callSid = () => {
-    const customerObj = participants.filter(
-      (participant) => participant.participantType === 'customer'
-    );
-    return customerObj[0].callSid;
-  };
   console.debug('PARTICIPANTS: ', participants);
 
-  console.debug('CUSTOMER SID: ', callSid());
+  console.debug('CUSTOMER SID: ', callSid(participants));
   console.debug('BEFORE TRANSFER PAYLOAD: ', payload);
   const options = {
     transfer: true,
     confSid: payload.task.conference.conferenceSid,
-    callSid: callSid(),
+    callSid: callSid(participants),
   };
 
   console.debug('TRANSFER OPTIONS', options);
@@ -70,6 +71,7 @@ const handleReservationAccept = async (reservation) => {
     outgoing: outgoingTransfer,
     incoming: incomingTransfer,
   } = reservation.task.transfers;
+  const { workerSid } = reservation;
   console.log('CONFERENCE OBJ: ', customer);
   console.debug('OUTGOING TRANSFER: ', outgoingTransfer);
 
@@ -77,6 +79,7 @@ const handleReservationAccept = async (reservation) => {
     callSid: customer,
     confSid,
     taskSid,
+    workerSid,
   };
 
   const startStream = (options) => {
@@ -108,6 +111,38 @@ const handleReservationAccept = async (reservation) => {
 
 const handleReservationWrapup = async (reservation) => {
   console.log(`handleReservationWrapup: `, reservation);
+  const { sid: confSid } = reservation.task.attributes.conference;
+  const { sid: taskSid } = reservation.task;
+  const { workerSid } = reservation;
+  const {
+    customer: callSid,
+  } = reservation.task.attributes.conference.participants;
+
+  const requestOptions = {
+    callSid,
+    confSid,
+    taskSid,
+    workerSid,
+  };
+
+  const stopStream = (options) => {
+    return new Promise((resolve, reject) => {
+      request('stream-call', manager, options)
+        .then((response) => {
+          console.log('STREAM RESPONSE:\r\n  ', response);
+          resolve(response);
+        })
+        .catch((error) => {
+          console.error(`ERRR STREAM \r\n`, error);
+          reject(error);
+        });
+    });
+  };
+
+  const wrapup = true;
+  const options = { ...requestOptions, wrapup };
+  console.debug('STOP MEDIA OPTIONS: ', options);
+  await stopStream(options);
 };
 
 const handleReservationEnded = async (reservation, eventType) => {
