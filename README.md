@@ -12,4 +12,9 @@ You can safely update the "customer" leg of a call with TwiML instructions, whic
 
 Please note these are examples. You will have to change the code to suite your specific use case; however, this code should be enough to help you understand how to start/stop Media streams on the customer leg of a conference call without the risk of disrupting the call.
 
-In the Flex React code, the main file we're working from is the [index.js file found under /src/listeners](https://github.com/jmadden/example-code-flex-media-stream/blob/main/src/listeners/index.js). The listeners code is being instantiated in the `StreamRecordingPlugin.js` file by `import './listeners';`
+In the Flex React code, the main file we're working from is the [index.js file found under /src/listeners/](https://github.com/jmadden/example-code-flex-media-stream/blob/main/src/listeners/index.js). The listeners code is being instantiated in the `StreamRecordingPlugin.js` file by using `import './listeners';`
+
+In the Twilio Serverless Function code the main file we're working from is the [stream-call.js file found under /serverless-Streams-Recording/functions/](https://github.com/jmadden/example-code-flex-media-stream/blob/main/serverless-Stream-Recording/functions/stream-call.js). This fuctions is responsible for manipulating the customer call leg of the conference.
+
+1. The first thing we need to take care of is removing the beep from the conference call whenever someone joins the call. This needs to happen to avoid any confusion on the call since the only way to update the customer leg of the call is to remove them from the conference and add them back in. This could make for multiple beeps which may become confusing for the agent. This will happen on a [beforeAcceptTask even in the index.js file](https://github.com/jmadden/example-code-flex-media-stream/blob/main/src/listeners/index.js#L36-L38).
+2. Starting the first Media Stream - This will happen when the customer is connected to the agent and the [reservatoin is accepted. This happens in the index.js file](https://github.com/jmadden/example-code-flex-media-stream/blob/main/src/listeners/index.js#L68-L114).
