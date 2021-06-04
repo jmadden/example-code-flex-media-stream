@@ -4,7 +4,9 @@ import { ReservationEvents } from '../enums';
 import request from '../helpers/request';
 
 const manager = Manager.getInstance();
+const myWorkerSid = manager.workerClient.sid;
 const reservationListeners = new Map();
+const conferenceTrackers = {};
 
 const BASE_URL = process.env.REACT_APP_SERVERLESS_BASE_URL;
 
@@ -20,34 +22,75 @@ const handleBeforeTransfer = (options) => {
         resolve(response);
       })
       .catch((error) => {
-        console.error(`ERRR STREAM \r\n`, error);
+        console.error(`ERR STREAM \r\n`, error);
         reject(error);
       });
   });
 };
 
-const callSid = (participants) => {
-  const customerObj = participants.filter(
-    (participant) => participant.participantType === 'customer'
-  );
-  return customerObj[0].callSid;
+const startStream = (options) => {
+  return new Promise((resolve, reject) => {
+    request('stream-call', manager, options)
+      .then((response) => {
+        console.log('STREAM RESPONSE:\r\n  ', response);
+        resolve(response);
+      })
+      .catch((error) => {
+        console.error(`ERR STREAM \r\n`, error);
+        reject(error);
+      });
+  });
+};
+
+const stopStream = (options) => {
+  return new Promise((resolve, reject) => {
+    request('stream-call', manager, options)
+      .then((response) => {
+        console.log('STREAM RESPONSE:\r\n  ', response);
+        resolve(response);
+      })
+      .catch((error) => {
+        console.error(`ERR STREAM \r\n`, error);
+        reject(error);
+      });
+  });
 };
 
 Actions.addListener('beforeAcceptTask', (payload) => {
   payload.conferenceOptions.beep = false;
+  payload.conferenceOptions.beepOnCustomerEntrance = false;
+
+  const { task } = payload;
+
+  if (TaskHelper.isOutboundCallTask(task)) {
+    return;
+  }
+
+  const { conference, taskSid } = task;
+  const participants = conference?.source?.children || [];
+  const customer = participants.find(p => p?.value?.participant_type === 'customer' && p?.value?.status === 'joined');
+
+  console.debug('StreamRecording, beforeAcceptTask, customer.lastEventId:', customer?.lastEventId);
+  conferenceTrackers[taskSid] = { customerLastEventId: customer?.lastEventId };
 });
 
 Actions.addListener('beforeTransferTask', async (payload) => {
-  const { participants } = payload.task.conference;
+  if (TaskHelper.isOutboundCallTask(payload.task)) {
+    return;
+  }
+
+  const { conferenceSid, participants } = payload.task.conference;
 
   console.debug('PARTICIPANTS: ', participants);
 
-  console.debug('CUSTOMER SID: ', callSid(participants));
+  const customer = participants.find(p => p.participantType === 'customer') || {};
+
+  console.debug('CUSTOMER SID: ', customer.callSid);
   console.debug('BEFORE TRANSFER PAYLOAD: ', payload);
   const options = {
     transfer: true,
-    confSid: payload.task.conference.conferenceSid,
-    callSid: callSid(participants),
+    confSid: conferenceSid,
+    callSid: customer.callSid,
   };
 
   console.debug('TRANSFER OPTIONS', options);
@@ -68,13 +111,19 @@ const stopReservationListeners = (reservation) => {
 const handleReservationAccept = async (reservation) => {
   console.debug('RESERVATION OBJ: ', reservation);
   console.log(`### handleReservationAccept ${reservation.sid}`);
-  const { customer } = reservation.task.attributes.conference.participants;
-  const { sid: confSid } = reservation.task.attributes.conference;
-  const { sid: taskSid } = reservation.task;
+  const task = TaskHelper.getTaskByTaskSid(reservation.sid);
+
+  if (TaskHelper.isOutboundCallTask(task)) {
+    return;
+  }
+
+  const { customer } = task.attributes.conference.participants;
+  const { sid: confSid } = task.attributes.conference;
+  const { taskSid } = task;
   const {
-    outgoing: outgoingTransfer,
-    incoming: incomingTransfer,
-  } = reservation.task.transfers;
+    outgoingTransferObject: outgoingTransfer,
+    incomingTransferObject: incomingTransfer,
+  } = task;
   const { workerSid } = reservation;
   console.log('CONFERENCE OBJ: ', customer);
   console.debug('OUTGOING TRANSFER: ', outgoingTransfer);
@@ -86,21 +135,7 @@ const handleReservationAccept = async (reservation) => {
     workerSid,
   };
 
-  const startStream = (options) => {
-    return new Promise((resolve, reject) => {
-      request('stream-call', manager, options)
-        .then((response) => {
-          console.log('STREAM RESPONSE:\r\n  ', response);
-          resolve(response);
-        })
-        .catch((error) => {
-          console.error(`ERRR STREAM \r\n`, error);
-          reject(error);
-        });
-    });
-  };
-
-  if (customer && outgoingTransfer === null && incomingTransfer === null) {
+  if (customer && outgoingTransfer === undefined && incomingTransfer === undefined) {
     const stream = 'A';
     const options = { ...requestOptions, stream };
     await startStream(options);
@@ -110,17 +145,57 @@ const handleReservationAccept = async (reservation) => {
     const stream = 'B';
     const options = { ...requestOptions, stream };
     await startStream(options);
+
+    const { conference } = task;
+    console.debug('StreamRecording, handleReservationAccept, conference:', conference);
+    const participants = conference?.source?.children || [];
+
+    let intervalCustomerRejoined = setInterval(() => {
+      const customer = participants.find(p => p?.value?.participant_type === 'customer' && p?.value?.status === 'joined');
+      console.debug('StreamRecording, handleReservationAccept, customer.lastEventId:', customer?.lastEventId);
+      if (conferenceTrackers[taskSid].customerLastEventId < customer?.lastEventId) {
+        Actions.invokeAction('HoldCall', { sid: reservation.sid });
+        clearInterval(intervalCustomerRejoined);
+        intervalCustomerRejoined = undefined;
+      }
+    }, 100);
+    setTimeout(() => {
+      if (intervalCustomerRejoined) {
+        console.warn('StreamRecording, handleReservationAccept, Customer last event ID did not change within timeout. Not putting customer on hold.');
+        clearInterval(intervalCustomerRejoined);
+      }
+    }, 5000);
   }
 };
 
 const handleReservationWrapup = async (reservation) => {
   console.log(`handleReservationWrapup: `, reservation);
-  const { sid: confSid } = reservation.task.attributes.conference;
-  const { sid: taskSid } = reservation.task;
-  const { workerSid } = reservation;
+  const task = TaskHelper.getTaskByTaskSid(reservation.sid);
+
+  if (TaskHelper.isOutboundCallTask(task)) {
+    return;
+  }
+
   const {
-    customer: callSid,
-  } = reservation.task.attributes.conference.participants;
+    conference,
+    taskSid,
+    workerSid
+  } = task;
+  
+  const { conferenceSid: confSid, liveWorkerCount, liveWorkers, status } = conference;
+  console.debug('LIVE WORKER COUNT: ', liveWorkerCount);
+  console.debug('LIVE WORKERS: ', liveWorkers);
+
+  if (liveWorkerCount === 1 && liveWorkers.some(w => w.isMyself)) {
+    // My worker is the only live worker, which means the customer call
+    // is ending. The stream will stop on its own, no need to continue.
+    console.debug('STREAM STOPPING ON ITS OWN');
+    return;
+  }
+
+  const participants = conference?.participants || [];
+  const customer = participants.find(p => p.participantType === 'customer') || {};
+  const { callSid, onHold } = customer;
 
   const requestOptions = {
     callSid,
@@ -129,28 +204,20 @@ const handleReservationWrapup = async (reservation) => {
     workerSid,
   };
 
-  const stopStream = (options) => {
-    return new Promise((resolve, reject) => {
-      request('stream-call', manager, options)
-        .then((response) => {
-          console.log('STREAM RESPONSE:\r\n  ', response);
-          resolve(response);
-        })
-        .catch((error) => {
-          console.error(`ERRR STREAM \r\n`, error);
-          reject(error);
-        });
-    });
-  };
-
   const wrapup = true;
-  const options = { ...requestOptions, wrapup };
+  const options = { ...requestOptions, onHold, wrapup };
   console.debug('STOP MEDIA OPTIONS: ', options);
   await stopStream(options);
 };
 
 const handleReservationEnded = async (reservation, eventType) => {
   console.log(`handleReservationEnded: `, reservation);
+
+  console.debug('CONFERENCE TRACKERS, PRE CLEANUP:', conferenceTrackers);
+
+  delete conferenceTrackers[reservation.task.sid];
+
+  console.debug('CONFERENCE TRACKERS, POST CLEANUP:', conferenceTrackers);
 };
 
 const handleReservationUpdated = (event, reservation) => {
