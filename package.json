@@ -12,7 +12,7 @@
     "react-dom": "^16.5.2"
   },
   "devDependencies": {
-    "@twilio/flex-ui": "^1"
+    "@twilio/flex-ui": "^1",
     "react-test-renderer": "16.5.2"
   }
 }
